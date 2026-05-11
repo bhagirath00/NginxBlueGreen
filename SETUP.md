@@ -10,7 +10,7 @@ This guide provides the complete setup instructions for both local testing (Wind
 
 ---
 
-## 🐧 Production Setup (Ubuntu Linux)
+## Production Setup (Ubuntu Linux)
 
 ### **1. Install .NET 8 Runtime**
 ```bash
@@ -23,16 +23,13 @@ sudo apt-get install -y dotnet-sdk-8.0
 ```
 
 ### **2. Configure Nginx**
-Create a new config file at `/etc/nginx/sites-available/bluegreen` and add the following:
 ```nginx
 upstream dotnet_app {
-    server 127.0.0.1:2001; # Default to Green
+    server 127.0.0.1:2001;
 }
 
 server {
     listen 80;
-    server_name yourdomain.com;
-
     location / {
         proxy_pass http://dotnet_app;
         proxy_http_version 1.1;
@@ -44,30 +41,17 @@ server {
 }
 ```
 
-### **3. Setup Systemd Services**
-Create two services: `app-green.service` and `app-blue.service` in `/etc/systemd/system/`.
-Example for Green:
-```ini
-[Service]
-WorkingDirectory=/var/www/green
-ExecStart=/usr/bin/dotnet /var/www/green/BlueGreenApp.dll
-Environment=ASPNETCORE_URLS=http://localhost:2001
-Environment=APP_COLOR=Green
-Restart=always
-```
+## Commands Used
 
----
-
-## 🛠️ Local Proof (Windows)
-
-### **1. Start the System**
-Run the automated script to build and launch the primary server:
+### **1. Initial Setup and Run**
 ```powershell
-./start.ps1
+dotnet publish src/BlueGreenApp.csproj -c Release -o ./publish
+mkdir -p ./www/green, ./www/blue
+cp -r ./publish/* ./www/green/
+$env:APP_COLOR="Green"; $env:ASPNETCORE_URLS="http://localhost:2001"; dotnet ./www/green/BlueGreenApp.dll
 ```
 
-### **2. Individual Commands**
-*   **Build**: `dotnet publish src/BlueGreenApp.csproj -c Release -o ./publish`
-*   **Switch**: Visit `http://localhost:2001` and click the button.
-*   **Update**: Replace DLLs in `./publish` or run the build command again.
-*   **Return**: Visit `http://localhost:2002` and click the return button.
+### **2. Update Deployment (Simulate)**
+```powershell
+dotnet publish src/BlueGreenApp.csproj -c Release -o ./publish
+```
