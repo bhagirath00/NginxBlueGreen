@@ -1,32 +1,31 @@
 # .NET Blue-Green Deployment Master Controller
 
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![ASP.NET Core](https://img.shields.io/badge/.NET-Core-512BD4?logo=dotnet&logoColor=white)
+![Nginx](https://img.shields.io/badge/Nginx-OpenSource-2695BA?logo=nginx&logoColor=white)
+
 A production-ready deployment strategy for ASP.NET Core that solves the .NET DLL file-locking issue using Nginx and a "Bounce" deployment flow.
 
 ## Operational Flow
 
 ```mermaid
-graph TD
+graph LR
+    %% Node Styles
     classDef green fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20;
     classDef blue fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#0d47a1;
     classDef orange fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#bf360c;
 
-    subgraph "PROD STATE (Port 2001)"
-        A[Primary Instance: ACTIVE]:::green
+    subgraph "PROD"
+        A[Port 2001: LIVE]:::green
     end
 
-    A -->|Trigger Switch| B[Spawn Lifeboat: Port 2002]:::blue
+    A --> B[Start Port 2002]:::blue
     B --> C[Stop Port 2001]:::orange
-    C --> D{DLLs UNLOCKED}:::orange
-
-    subgraph "MAINTENANCE WINDOW"
-        D --> E[Replace DLL Files]
-        E --> F[Trigger Return]
-    end
-
-    F --> G[Copy Files to Primary]:::green
-    G --> H[Start Port 2001]:::green
-    H --> I[Terminate Lifeboat]:::blue
-    I --> J[Primary Instance: ACTIVE]:::green
+    C --> D{UNLOCK}:::orange
+    D --> E[Update DLLs]:::orange
+    E --> F[Restart Port 2001]:::green
+    F --> G[Stop Port 2002]:::blue
+    G --> H[Port 2001: LIVE]:::green
 ```
 
 ---
