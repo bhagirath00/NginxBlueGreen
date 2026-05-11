@@ -1,6 +1,6 @@
 # Automation Script for Blue-Green Deployment Proof
 
-Write-Host "--- 🚀 Starting Setup ---" -ForegroundColor Cyan
+Write-Host "--- Starting Setup ---" -ForegroundColor Cyan
 
 # 1. Build
 Write-Host "1. Building Project..." -ForegroundColor Gray
@@ -13,7 +13,7 @@ if (!(Test-Path "./www/blue")) { New-Item -ItemType Directory -Path "./www/blue"
 Copy-Item ./publish/* ./www/green/ -Recurse -Force
 
 # 3. Start
-Write-Host "--- ✅ Setup Complete ---" -ForegroundColor Green
+Write-Host "--- Setup Complete ---" -ForegroundColor Green
 Write-Host "Starting Primary Server on Port 2001..." -ForegroundColor Green
 Write-Host "Visit: http://localhost:2001" -ForegroundColor Yellow
 
