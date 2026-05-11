@@ -1,0 +1,12 @@
+# .NET
+bin/
+obj/
+publish/
+
+# Simulation Folders
+www/
+
+# User Settings
+.vs/
+.vscode/
+*.user
