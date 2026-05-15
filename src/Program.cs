@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
@@ -6,8 +6,26 @@ var app = builder.Build();
 var appColor = Environment.GetEnvironmentVariable("APP_COLOR") ?? "Green";
 var appPort = Environment.GetEnvironmentVariable("ASPNETCORE_URLS") ?? "http://localhost:2001";
 var isPort2001 = appPort.Contains("2001");
-var publishWatchPath = Path.GetFullPath("./publish");
-var greenDir = Path.GetFullPath("./www/green");
+
+// ─── ROBUST FILE PATH RESOLUTION ───────────────────────────────────────────
+// Use the ASP.NET content root to anchor paths (stable when launched via scripts).
+var rootDir = app.Environment.ContentRootPath;
+var publishWatchPath = Path.Combine(rootDir, "publish");
+var greenDir = Path.Combine(rootDir, "www", "green");
+
+DateTime GetLatestWriteUtc(string dir)
+{
+    if (!Directory.Exists(dir)) return DateTime.MinValue;
+
+    var latest = DateTime.MinValue;
+    foreach (var file in Directory.GetFiles(dir))
+    {
+        var writeTime = File.GetLastWriteTimeUtc(file);
+        if (writeTime > latest) latest = writeTime;
+    }
+
+    return latest;
+}
 
 // Helper to start Port 2001 and kill this process
 async Task ReturnToPort2001()
@@ -26,7 +44,7 @@ async Task ReturnToPort2001()
 
     Process.Start(new ProcessStartInfo("dotnet")
     {
-        Arguments = $"{greenDir}/BlueGreenApp.dll",
+        Arguments = $"\"{Path.Combine(greenDir, "BlueGreenApp.dll")}\"",
         UseShellExecute = false,
         EnvironmentVariables =
         {
@@ -42,32 +60,78 @@ async Task ReturnToPort2001()
     Environment.Exit(0);
 }
 
-// ─── BLUE MODE (Port 2002): Poll + Manual trigger ────────────────────────────
-if (!isPort2001)
+// Helper to start Port 2002 and kill this process
+async Task SwitchToPort2002()
 {
-    Console.ForegroundColor = ConsoleColor.Blue;
-    Console.WriteLine("[PORT 2002] Blue server LIVE. Port 2001 DLLs are UNLOCKED.");
-    Console.WriteLine("[PORT 2002] Replace your DLLs, then click the button at http://localhost:2002");
+    Console.ForegroundColor = ConsoleColor.Yellow;
+    Console.WriteLine("[PORT 2001] File change detected! Starting Port 2002...");
     Console.ResetColor();
 
-    var startedAt = DateTime.UtcNow;
+    // Timestamped blue folder to avoid file lock conflicts
+    var blueDir = Path.GetFullPath($"./www/blue-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
+    Directory.CreateDirectory(blueDir);
+    foreach (var file in Directory.GetFiles(publishWatchPath))
+    {
+        try { File.Copy(file, Path.Combine(blueDir, Path.GetFileName(file)), overwrite: true); }
+        catch { }
+    }
+
+    Process.Start(new ProcessStartInfo("dotnet")
+    {
+        Arguments = $"\"{Path.Combine(blueDir, "BlueGreenApp.dll")}\"",
+        UseShellExecute = false,
+        EnvironmentVariables =
+        {
+            ["APP_COLOR"] = "Blue",
+            ["ASPNETCORE_URLS"] = "http://localhost:2002"
+        }
+    });
+
+    await Task.Delay(2000);
+    Console.ForegroundColor = ConsoleColor.Red;
+    Console.WriteLine("[PORT 2001] STOPPED. DLL files in ./publish/ are now FREE.");
+    Console.ResetColor();
+    Environment.Exit(0);
+}
+
+// ─── GREEN MODE (Port 2001): Watch for DLL changes ───────────────────────────
+if (isPort2001)
+{
+    var lastWrite = GetLatestWriteUtc(publishWatchPath);
+    Console.WriteLine($"[PORT 2001] Watching for changes in {publishWatchPath}... (Baseline: {lastWrite})");
+
     var triggered = false;
 
-    // Auto-detect if DLL actually changes (real deployment scenario)
     _ = Task.Run(async () =>
     {
+        await Task.Delay(3000); // Wait for startup to settle
         while (!triggered)
         {
             await Task.Delay(1000);
-            var dll = Path.Combine(publishWatchPath, "BlueGreenApp.dll");
-            if (File.Exists(dll) && File.GetLastWriteTimeUtc(dll) > startedAt)
+            var currentWrite = GetLatestWriteUtc(publishWatchPath);
+            if (currentWrite > lastWrite)
             {
-                if (triggered) return;
+                await Task.Delay(500); // Settling time for build
                 triggered = true;
-                Console.WriteLine("[PORT 2002] Auto-detected new DLL. Returning to Port 2001...");
-                await ReturnToPort2001();
+                Console.WriteLine($"\n[PORT 2001] UPDATE DETECTED! (New: {currentWrite} > Old: {lastWrite})");
+                await SwitchToPort2002();
             }
         }
+    });
+}
+// ─── BLUE MODE (Port 2002): Wait 30s then return ─────────────────────────────
+else
+{
+    Console.ForegroundColor = ConsoleColor.Blue;
+    Console.WriteLine("[PORT 2002] Blue server LIVE. Port 2001 DLLs are UNLOCKED for 30 Seconds.");
+    Console.ResetColor();
+
+    _ = Task.Run(async () =>
+    {
+        Console.WriteLine("[PORT 2002] Waiting 30 seconds before auto-returning to 2001...");
+        await Task.Delay(30000);
+        Console.WriteLine("[PORT 2002] 30 seconds elapsed. Returning to Port 2001 Automatically...");
+        await ReturnToPort2001();
     });
 }
 
@@ -76,7 +140,21 @@ app.MapGet("/", () => Results.Content(@"<!DOCTYPE html>
 <html>
 <head>
     <meta charset='utf-8'/>
+    <meta http-equiv='refresh' content='2'>
     <title>Blue-Green Dashboard</title>
+    <script>
+        let port = window.location.port;
+        // Aggressive polling so the browser switches ports instantly when one dies
+        setInterval(async () => {
+            try { 
+                const response = await fetch('/'); 
+                if (!response.ok) throw new Error();
+            }
+            catch { 
+                window.location.href = port === '2001' ? 'http://localhost:2002' : 'http://localhost:2001'; 
+            }
+        }, 500);
+    </script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: 'Segoe UI', sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; background: " + (isPort2001 ? "#e8f5e9" : "#e3f2fd") + @"; }
@@ -86,8 +164,6 @@ app.MapGet("/", () => Results.Content(@"<!DOCTYPE html>
         .port { font-size: 16px; font-weight: 600; color: " + (isPort2001 ? "#2e7d32" : "#1565c0") + @"; margin-bottom: 24px; }
         hr { border: none; border-top: 1px solid #eee; margin: 20px 0; }
         p { color: #555; margin-bottom: 20px; line-height: 1.6; font-size: 15px; }
-        button { color: white; border: none; padding: 14px 32px; border-radius: 8px; cursor: pointer; font-size: 15px; font-weight: 600; width: 100%; background: " + (isPort2001 ? "#1565c0" : "#2e7d32") + @"; }
-        button:hover { opacity: 0.88; }
         .alert { background: #fff8e1; border-left: 4px solid #f9a825; border-radius: 6px; padding: 12px 16px; color: #795548; margin-bottom: 20px; font-size: 14px; text-align: left; }
     </style>
 </head>
@@ -97,90 +173,9 @@ app.MapGet("/", () => Results.Content(@"<!DOCTYPE html>
         <h1>" + (isPort2001 ? "Green Server" : "Blue Server") + @"</h1>
         <div class='port'>" + appPort + @"</div>
         <hr/>
-        " + (isPort2001
-            ? @"<p>Click below to shift traffic to Port 2002 and unlock your DLL files for replacement.</p>
-        <form action='/switch' method='POST'>
-            <button type='submit'>Switch to Port 2002</button>
-        </form>"
-            : @"<div class='alert'>Port 2001 is stopped. DLL files are now free to replace.</div>
-        <p>Once you have replaced your DLL files, click below to return to Port 2001.</p>
-        <form action='/return' method='POST'>
-            <button type='submit'>Return to Port 2001</button>
-        </form>") + @"
+        " + (isPort2001 ? "" : "") + @"
     </div>
 </body>
 </html>", "text/html"));
-
-// ─── MANUAL RETURN: Port 2002 → Port 2001 ────────────────────────────────────
-app.MapPost("/return", async (HttpContext ctx) =>
-{
-    Console.ForegroundColor = ConsoleColor.Green;
-    Console.WriteLine("[PORT 2002] Manual return triggered from browser.");
-    Console.ResetColor();
-
-    await ctx.Response.WriteAsync(@"
-<html><head><style>
-body{font-family:'Segoe UI',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#e8f5e9}
-.card{background:white;padding:40px;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,0.1);text-align:center;max-width:420px}
-h2{color:#2e7d32;margin-bottom:12px}p{color:#555;margin-bottom:8px}
-</style></head><body>
-<div class='card'>
-<h2>Returning to Port 2001...</h2>
-<p>Copying new DLL files to Green server.</p>
-<p>Port 2001 is starting up.</p>
-<p>Redirecting automatically...</p>
-<script>setTimeout(()=>window.location.href='http://localhost:2001',4000)</script>
-</div></body></html>");
-
-    _ = Task.Run(ReturnToPort2001);
-});
-
-// ─── SWITCH: Port 2001 → Port 2002 ───────────────────────────────────────────
-app.MapPost("/switch", async (HttpContext ctx) =>
-{
-    Console.ForegroundColor = ConsoleColor.Yellow;
-    Console.WriteLine("[PORT 2001] Switch triggered. Starting Port 2002...");
-    Console.ResetColor();
-
-    // Timestamped blue folder to avoid file lock conflicts
-    var blueDir = Path.GetFullPath($"./www/blue-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
-    var publishDir = Path.GetFullPath("./publish");
-    Directory.CreateDirectory(blueDir);
-    foreach (var file in Directory.GetFiles(publishDir))
-        File.Copy(file, Path.Combine(blueDir, Path.GetFileName(file)), overwrite: true);
-
-    Process.Start(new ProcessStartInfo("dotnet")
-    {
-        Arguments = $"{blueDir}/BlueGreenApp.dll",
-        UseShellExecute = false,
-        EnvironmentVariables =
-        {
-            ["APP_COLOR"] = "Blue",
-            ["ASPNETCORE_URLS"] = "http://localhost:2002"
-        }
-    });
-
-    _ = Task.Run(async () =>
-    {
-        await Task.Delay(2000);
-        Console.ForegroundColor = ConsoleColor.Red;
-        Console.WriteLine("[PORT 2001] STOPPED. DLL files in ./publish/ are now FREE.");
-        Console.ResetColor();
-        Environment.Exit(0);
-    });
-
-    await ctx.Response.WriteAsync(@"
-<html><head><style>
-body{font-family:'Segoe UI',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#e3f2fd}
-.card{background:white;padding:40px;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,0.1);text-align:center;max-width:420px}
-h2{color:#1565c0;margin-bottom:12px}p{color:#555;margin-bottom:8px}
-</style></head><body>
-<div class='card'>
-<h2>Switching to Port 2002...</h2>
-<p>Port 2001 is shutting down.</p>
-<p>DLL files will be unlocked in 2 seconds.</p>
-<script>setTimeout(()=>window.location.href='http://localhost:2002',3500)</script>
-</div></body></html>");
-});
 
 app.Run();
