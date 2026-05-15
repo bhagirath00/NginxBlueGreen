@@ -2,6 +2,13 @@
 
 Write-Host "--- Starting Setup ---" -ForegroundColor Cyan
 
+# 0. Clean up existing processes
+Write-Host "Cleaning up existing processes..." -ForegroundColor Gray
+$dotnetApps = Get-CimInstance Win32_Process -Filter "Name = 'dotnet.exe' AND CommandLine LIKE '%BlueGreenApp.dll%'"
+if ($dotnetApps) {
+    $dotnetApps | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
 # 1. Build
 Write-Host "1. Building Project..." -ForegroundColor Gray
 dotnet publish src/BlueGreenApp.csproj -c Release -o ./publish
